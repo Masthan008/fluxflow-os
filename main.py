@@ -61,9 +61,83 @@ def languages():
         "languages": [
             {"id": "python", "name": "Python 3.11", "extension": ".py"},
             {"id": "c", "name": "C (GCC)", "extension": ".c"},
-            {"id": "cpp", "name": "C++ (G++)", "extension": ".cpp"}
+            {"id": "cpp", "name": "C++ (G++)", "extension": ".cpp"},
+            {"id": "java", "name": "Java", "extension": ".java"},
         ]
     })
+
+
+# ============== JDOODLE PROXY (BRAIN SECURITY) ==============
+
+# Get JDoodle credentials from environment (set in Render Dashboard)
+JDOODLE_CLIENT_ID = os.environ.get('JDOODLE_CLIENT_ID', '')
+JDOODLE_CLIENT_SECRET = os.environ.get('JDOODLE_CLIENT_SECRET', '')
+
+@app.route('/run-code', methods=['POST'])
+@app.route('/run-jdoodle', methods=['POST'])
+def run_code_jdoodle():
+    """
+    JDoodle Proxy - Secure code execution via JDoodle API
+    Hides API keys from the mobile app
+    
+    Request body:
+    {
+        "script": "print('Hello')",
+        "language": "python3",
+        "stdin": ""
+    }
+    
+    JDoodle language codes: python3, c, cpp14, java
+    """
+    try:
+        import requests
+        
+        data = request.json
+        if not data:
+            return jsonify({"error": "No JSON body provided"}), 400
+        
+        script = data.get('script', '')
+        language = data.get('language', 'python3')
+        stdin = data.get('stdin', '')
+        
+        if not script:
+            return jsonify({"error": "No script provided"}), 400
+        
+        # Check if JDoodle is configured
+        if not JDOODLE_CLIENT_ID or not JDOODLE_CLIENT_SECRET:
+            # Fallback to local execution if JDoodle not configured
+            return jsonify({
+                "error": "JDoodle not configured. Using local execution.",
+                "fallback": True
+            }), 503
+        
+        # Call JDoodle API
+        jdoodle_url = "https://api.jdoodle.com/v1/execute"
+        payload = {
+            "clientId": JDOODLE_CLIENT_ID,
+            "clientSecret": JDOODLE_CLIENT_SECRET,
+            "script": script,
+            "language": language,
+            "versionIndex": "0",
+            "stdin": stdin
+        }
+        
+        response = requests.post(jdoodle_url, json=payload, timeout=30)
+        result = response.json()
+        
+        return jsonify({
+            "success": True,
+            "output": result.get('output', ''),
+            "statusCode": result.get('statusCode', 0),
+            "memory": result.get('memory', ''),
+            "cpuTime": result.get('cpuTime', ''),
+            "language": language
+        })
+        
+    except requests.Timeout:
+        return jsonify({"error": "JDoodle API timeout"}), 408
+    except Exception as e:
+        return jsonify({"error": f"JDoodle proxy error: {str(e)}"}), 500
 
 
 @app.route('/run', methods=['POST'])

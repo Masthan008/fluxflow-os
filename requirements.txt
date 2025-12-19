@@ -11,3 +11,6 @@ RestrictedPython==7.0
 
 # Utilities
 requests==2.31.0
+
+# Firebase Cloud Messaging
+firebase-admin==6.4.0

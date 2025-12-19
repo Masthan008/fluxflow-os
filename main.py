@@ -10,8 +10,11 @@ import tempfile
 import os
 import sys
 import time
-import resource
-import signal
+import json
+
+# Firebase Admin SDK for FCM Push Notifications
+import firebase_admin
+from firebase_admin import credentials, messaging
 
 app = Flask(__name__)
 CORS(app, origins=["*"])  # Allow all origins for mobile app
@@ -19,6 +22,20 @@ CORS(app, origins=["*"])  # Allow all origins for mobile app
 # Configuration
 MAX_EXECUTION_TIME = 5  # seconds
 MAX_OUTPUT_SIZE = 50000  # characters
+
+# ============== FIREBASE INITIALIZATION ==============
+# Load Firebase credentials from environment variable
+firebase_creds_json = os.environ.get("FIREBASE_CREDENTIALS")
+if firebase_creds_json:
+    try:
+        cred = credentials.Certificate(json.loads(firebase_creds_json))
+        firebase_admin.initialize_app(cred)
+        print("✅ Firebase Admin SDK initialized")
+    except Exception as e:
+        print(f"⚠️ Firebase init failed: {e}")
+else:
+    print("⚠️ FIREBASE_CREDENTIALS not set - FCM disabled")
+
 
 def set_limits():
     """Set resource limits for subprocess"""
@@ -65,6 +82,60 @@ def languages():
             {"id": "java", "name": "Java", "extension": ".java"},
         ]
     })
+
+
+# ============== FCM PUSH NOTIFICATION WEBHOOK ==============
+
+@app.route('/webhook-news-notification', methods=['POST'])
+def send_news_notification():
+    """
+    Supabase Database Webhook - Called on news INSERT
+    Sends FCM push notification to all subscribed students
+    """
+    try:
+        payload = request.json
+        if not payload:
+            return jsonify({"error": "No payload"}), 400
+        
+        # Supabase sends the new row in 'record'
+        record = payload.get('record', {})
+        
+        title = record.get('title', 'New Update')
+        body = record.get('description', 'Check the app for details!')
+        
+        # Check if Firebase is initialized
+        if not firebase_admin._apps:
+            return jsonify({"error": "Firebase not configured"}), 503
+        
+        # Create FCM message for topic
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=f"📢 {title}",
+                body=body,
+            ),
+            topic="all_students",  # All subscribed users receive this
+            android=messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    icon="notification_icon",
+                    color="#00FFFF",
+                    sound="default",
+                )
+            ),
+        )
+        
+        # Send the notification
+        response = messaging.send(message)
+        
+        return jsonify({
+            "success": True,
+            "message_id": response,
+            "topic": "all_students"
+        })
+        
+    except Exception as e:
+        print(f"FCM Error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ============== HYBRID CODE EXECUTION (JDoodle + Piston) ==============

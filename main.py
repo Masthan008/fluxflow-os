@@ -67,23 +67,19 @@ def languages():
     })
 
 
-# ============== PISTON API (FREE & UNLIMITED) ==============
+# ============== HYBRID CODE EXECUTION (JDoodle + Piston) ==============
 
-# Language mapping: Flutter names -> Piston API names
-LANGUAGE_MAP = {
-    "c": "c",
-    "cpp": "c++",       # Flutter sends 'cpp', Piston needs 'c++'
-    "python": "python",
-    "java": "java",
-    "dart": "dart",
-}
+# Get JDoodle credentials from environment (optional, set in Render)
+import os
+JDOODLE_ID = os.environ.get('JDOODLE_CLIENT_ID', '')
+JDOODLE_SECRET = os.environ.get('JDOODLE_CLIENT_SECRET', '')
 
 @app.route('/run-code', methods=['POST'])
-@app.route('/run-piston', methods=['POST'])
-def run_code_piston():
+def run_hybrid_code():
     """
-    Piston API - Free & Unlimited code execution
-    No API keys required!
+    Hybrid Code Execution - JDoodle first, Piston fallback
+    
+    Supported languages: c, cpp, python, java, js, csharp, go, kotlin, swift, dart
     
     Request body:
     {
@@ -91,40 +87,101 @@ def run_code_piston():
         "language": "python",
         "stdin": ""
     }
-    
-    Supported languages: c, cpp, python, java, dart
     """
+    import requests
+    
+    data = request.json
+    if not data:
+        return jsonify({"error": "No JSON body provided", "success": False}), 400
+    
+    script = data.get('script', '')
+    language = data.get('language', 'python').lower()
+    stdin = data.get('stdin', '')
+    
+    if not script:
+        return jsonify({"error": "No script provided", "success": False}), 400
+    
+    # === ATTEMPT 1: JDOODLE (if configured) ===
+    if JDOODLE_ID and JDOODLE_SECRET:
+        try:
+            jdoodle_map = {
+                "c": "c",
+                "cpp": "cpp17",
+                "python": "python3",
+                "java": "java",
+                "js": "nodejs",
+                "csharp": "csharp",
+                "go": "go",
+                "kotlin": "kotlin",
+                "swift": "swift",
+                "dart": "dart"
+            }
+            
+            jdoodle_lang = jdoodle_map.get(language, "python3")
+            
+            jdoodle_payload = {
+                "clientId": JDOODLE_ID,
+                "clientSecret": JDOODLE_SECRET,
+                "script": script,
+                "language": jdoodle_lang,
+                "versionIndex": "0",
+                "stdin": stdin
+            }
+            
+            response = requests.post(
+                "https://api.jdoodle.com/v1/execute",
+                json=jdoodle_payload,
+                timeout=30
+            )
+            result = response.json()
+            
+            if response.status_code == 200 and "output" in result:
+                output = result.get("output", "")
+                # Check if rate limited
+                if "Daily Limit Reached" not in output:
+                    return jsonify({
+                        "success": True,
+                        "output": output if output else "(No output)",
+                        "error": "",
+                        "source": "JDoodle",
+                        "language": language
+                    })
+                # Fall through to Piston if rate limited
+                
+        except Exception as e:
+            print(f"JDoodle failed, trying Piston: {e}")
+    
+    # === ATTEMPT 2: PISTON (Free & Unlimited) ===
     try:
-        import requests
+        piston_map = {
+            "c": "c",
+            "cpp": "c++",
+            "python": "python",
+            "java": "java",
+            "js": "javascript",
+            "csharp": "csharp",
+            "go": "go",
+            "kotlin": "kotlin",
+            "swift": "swift",
+            "dart": "dart"
+        }
         
-        data = request.json
-        if not data:
-            return jsonify({"error": "No JSON body provided"}), 400
+        piston_lang = piston_map.get(language, "python")
         
-        script = data.get('script', '')
-        language = data.get('language', 'python').lower()
-        stdin = data.get('stdin', '')
-        
-        if not script:
-            return jsonify({"error": "No script provided"}), 400
-        
-        # Map Flutter language names to Piston names
-        target_lang = LANGUAGE_MAP.get(language, language)
-        
-        # Piston Public API (Free & Unlimited)
-        piston_url = "https://emkc.org/api/v2/piston/execute"
-        
-        payload = {
-            "language": target_lang,
-            "version": "*",  # Use latest version
+        piston_payload = {
+            "language": piston_lang,
+            "version": "*",
             "files": [{"content": script}],
             "stdin": stdin
         }
         
-        response = requests.post(piston_url, json=payload, timeout=30)
+        response = requests.post(
+            "https://emkc.org/api/v2/piston/execute",
+            json=piston_payload,
+            timeout=30
+        )
         result = response.json()
         
-        # Handle Piston response
         if "run" in result:
             output = result["run"]["stdout"] + result["run"]["stderr"]
             exit_code = result["run"].get("code", 0)
@@ -132,7 +189,7 @@ def run_code_piston():
                 "success": exit_code == 0,
                 "output": output if output else "(No output)",
                 "error": result["run"]["stderr"] if exit_code != 0 else "",
-                "exit_code": exit_code,
+                "source": "Piston",
                 "language": language
             })
         else:
@@ -141,14 +198,14 @@ def run_code_piston():
                 "success": False,
                 "output": "",
                 "error": f"Piston Error: {error_msg}",
-                "exit_code": -1,
+                "source": "Piston",
                 "language": language
             })
-        
+            
     except requests.Timeout:
-        return jsonify({"error": "Piston API timeout"}), 408
+        return jsonify({"error": "Execution timeout", "success": False}), 408
     except Exception as e:
-        return jsonify({"error": f"Piston error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {str(e)}", "success": False}), 500
 
 
 @app.route('/run', methods=['POST'])

@@ -64,11 +64,87 @@ def home():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint - Render pings this"""
+    from datetime import datetime
     return jsonify({
         "status": "healthy",
         "version": "1.0.0",
-        "timestamp": time.time()
+        "timestamp": time.time(),
+        "datetime": datetime.now().isoformat()
     })
+
+
+# ============== SUPABASE CONNECTION ==============
+from supabase import create_client, Client
+
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
+
+def get_supabase() -> Client:
+    """Get Supabase client"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise Exception("Supabase credentials not configured")
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+@app.route('/trigger-weekly-winner', methods=['GET'])
+def announce_weekly_winner():
+    """
+    Jealousy Engine - Auto-announce weekly champion
+    
+    1. Find top scorer by weekly_points
+    2. Create news post with winner's name
+    3. Reset all weekly_points to 0 for next week
+    
+    Triggered by cron-job.org every Sunday at 23:55
+    """
+    try:
+        supabase = get_supabase()
+        
+        # 1. Find the Top Scorer
+        response = supabase.table('students') \
+            .select('id, name, regd_no, weekly_points, subscription_tier') \
+            .order('weekly_points', desc=True) \
+            .limit(1) \
+            .execute()
+            
+        if not response.data or len(response.data) == 0:
+            return jsonify({
+                "status": "no_data",
+                "message": "No students found"
+            })
+            
+        winner = response.data[0]
+        winner_name = winner['name']
+        score = winner['weekly_points']
+        tier = winner.get('subscription_tier', 'free').upper()
+        
+        # 2. Create the "Jealousy" News Post
+        news_title = f"🏆 Week's Champion: {winner_name}!"
+        news_body = f"{winner_name} ({tier}) topped the coding leaderboard with {score} points! Can you beat them next week? Start solving challenges now!"
+        
+        supabase.table('news').insert({
+            "title": news_title,
+            "description": news_body,
+            "image_url": "https://img.icons8.com/fluency/240/trophy.png"
+        }).execute()
+        
+        # 3. RESET everyone's weekly points for the new week
+        supabase.table('students').update({"weekly_points": 0}).neq("id", "00000000-0000-0000-0000-000000000000").execute()
+        
+        return jsonify({
+            "status": "success",
+            "winner": winner_name,
+            "points": score,
+            "news_created": True,
+            "points_reset": True
+        })
+        
+    except Exception as e:
+        print(f"❌ Weekly winner error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 
 @app.route('/languages', methods=['GET'])

@@ -15,5 +15,6 @@ requests==2.31.0
 # Firebase Cloud Messaging
 firebase-admin==6.4.0
 
-# Supabase SDK for weekly winner automation
-supabase==2.3.0
+# Supabase SDK for weekly winner automation (compatible versions)
+supabase>=2.0.0
+gotrue>=2.0.0
